@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Memories of Us — Misio i Misia</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Lato:wght@400;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+</head>
+<body class="gate-page">
+
+  <div class="gate-card {% if error %}shake{% endif %}" id="gate-card">
+
+    <span class="gate-heart" aria-hidden="true">&#9829;</span>
+
+    <h1 class="gate-title">Memories of Us</h1>
+    <p class="gate-subtitle">Misio i Misia</p>
+
+    <form id="gate-form" method="POST" action="{{ url_for('login') }}" novalidate>
+      <label class="gate-label" for="gate-input">Enter the secret word</label>
+      <div class="gate-input-wrap">
+        <input
+          class="gate-input"
+          type="password"
+          id="gate-input"
+          name="password"
+          placeholder="&#9829; our little secret"
+          autocomplete="current-password"
+          autofocus
+          required
+        />
+      </div>
+      <button class="gate-btn" type="submit">Enter &#9829;</button>
+    </form>
+
+    {% if error %}
+      <p class="gate-error visible" role="alert">{{ error }}</p>
+    {% else %}
+      <p class="gate-error" id="gate-error" role="alert" aria-live="polite"></p>
+    {% endif %}
+
+  </div>
+
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

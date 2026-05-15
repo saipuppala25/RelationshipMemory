@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <title>Add Memories</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;1,400&family=Lato:wght@400;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --deep:  #FF4D6D;
+      --mid:   #FF8FA3;
+      --light: #FFB3C1;
+      --pale:  #FFCCD5;
+      --blush: #FFF0F3;
+      --text:  #4A2030;
+      --soft:  #7A4A58;
+      --white: #FFFFFF;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Lato', Arial, sans-serif;
+      background: linear-gradient(160deg, #FFF0F3 0%, #FFCCD5 55%, #FFB3C1 100%);
+      min-height: 100vh; min-height: 100dvh;
+      color: var(--text); padding-bottom: 40px;
+    }
+    .page-header { text-align: center; padding: 36px 20px 24px; }
+    .heart {
+      font-size: 2.4rem; animation: pulse 1.8s ease-in-out infinite;
+      display: block; margin-bottom: 10px; color: var(--deep);
+    }
+    @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.2)} }
+    h1 { font-family: 'Playfair Display', Georgia, serif; font-size: 1.9rem; color: var(--deep); margin-bottom: 4px; }
+    .subtitle { font-family: 'Playfair Display', Georgia, serif; font-style: italic; font-size: 0.95rem; color: var(--soft); }
+
+    /* Tabs */
+    .tabs {
+      display: flex; margin: 0 16px 20px;
+      background: rgba(255,255,255,0.5); border-radius: 14px;
+      padding: 4px; border: 1.5px solid var(--pale);
+    }
+    .tab-btn {
+      flex: 1; padding: 10px 8px; border: none; background: none;
+      border-radius: 10px; font-family: 'Lato', Arial, sans-serif;
+      font-size: 0.82rem; font-weight: 700; color: var(--soft);
+      cursor: pointer; transition: background 0.2s, color 0.2s;
+      letter-spacing: 0.03em; line-height: 1.3; text-align: center;
+    }
+    .tab-btn.active { background: var(--white); color: var(--deep); box-shadow: 0 2px 8px rgba(255,77,109,0.15); }
+    .tab-btn .tab-icon { display: block; font-size: 1.3rem; margin-bottom: 2px; }
+
+    /* Card */
+    .card {
+      background: rgba(255,255,255,0.9); border-radius: 22px;
+      padding: 24px 20px; margin: 0 16px;
+      box-shadow: 0 8px 36px rgba(255,77,109,0.13);
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* Pick zone */
+    .pick-zone {
+      border: 2.5px dashed var(--light); border-radius: 16px;
+      background: var(--blush); padding: 32px 16px; text-align: center;
+      cursor: pointer; transition: border-color 0.2s, background 0.2s;
+      position: relative; margin-bottom: 16px;
+    }
+    .pick-zone.has-files { border-color: var(--deep); background: #fff5f7; }
+    .pick-icon { font-size: 2.4rem; display: block; margin-bottom: 8px; }
+    .pick-text { font-weight: 700; font-size: 1rem; color: var(--text); margin-bottom: 4px; }
+    .pick-sub  { font-size: 0.82rem; color: var(--soft); }
+    .pick-hint { font-size: 0.72rem; color: var(--light); margin-top: 6px; }
+    .pick-zone input[type="file"] {
+      position: absolute; inset: 0; opacity: 0;
+      width: 100%; height: 100%; cursor: pointer;
+    }
+
+    /* Info boxes */
+    .album-info, .zip-info {
+      background: var(--blush); border-radius: 12px;
+      padding: 14px 16px; margin-bottom: 16px;
+      font-size: 0.85rem; color: var(--soft);
+      line-height: 1.6; border-left: 3px solid var(--mid);
+    }
+    .album-info strong, .zip-info strong { color: var(--deep); }
+    .album-steps { list-style: none; margin-top: 8px; }
+    .album-steps li { padding: 3px 0; }
+    .album-steps li::before { content: '-> '; color: var(--mid); font-weight: 700; }
+
+    /* Preview grid */
+    .preview-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: 8px; margin-bottom: 16px;
+    }
+    .preview-thumb {
+      aspect-ratio: 1; border-radius: 10px; overflow: hidden;
+      position: relative; background: var(--pale);
+    }
+    .preview-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .thumb-placeholder {
+      position: absolute; inset: 0; display: flex;
+      align-items: center; justify-content: center;
+      font-size: 1.6rem;
+      background: linear-gradient(135deg, var(--blush), var(--pale));
+    }
+    .vid-badge {
+      position: absolute; bottom: 4px; left: 4px;
+      background: rgba(255,77,109,0.85); color: white;
+      font-size: 0.6rem; font-weight: 700;
+      padding: 2px 5px; border-radius: 5px;
+    }
+    .zip-badge {
+      position: absolute; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: linear-gradient(135deg, var(--blush), var(--pale));
+      font-size: 1.8rem;
+    }
+    .zip-badge span {
+      font-size: 0.65rem; color: var(--soft); font-weight: 700;
+      margin-top: 4px; text-align: center; padding: 0 4px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+    }
+    .remove-thumb {
+      position: absolute; top: 4px; right: 4px;
+      background: rgba(255,77,109,0.85); color: white;
+      border: none; border-radius: 50%; width: 22px; height: 22px;
+      font-size: 0.85rem; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    /* Count badge */
+    .count-badge {
+      background: linear-gradient(135deg, var(--blush), var(--pale));
+      border: 2px dashed var(--light); border-radius: 14px;
+      padding: 20px 16px; text-align: center; margin-bottom: 4px;
+    }
+    .count-num {
+      display: block; font-family: 'Playfair Display', Georgia, serif;
+      font-size: 2.4rem; font-weight: 700; color: var(--deep);
+      line-height: 1; margin-bottom: 6px;
+    }
+    .count-label { display: block; font-size: 0.85rem; color: var(--soft); margin-bottom: 12px; }
+    .count-clear {
+      background: none; border: 1.5px solid var(--light); color: var(--soft);
+      border-radius: 100px; padding: 6px 16px;
+      font-size: 0.8rem; font-family: 'Lato', Arial, sans-serif; cursor: pointer;
+    }
+
+    /* Progress */
+    .progress-wrap {
+      background: var(--pale); border-radius: 100px;
+      height: 8px; overflow: hidden; margin-bottom: 8px;
+    }
+    .progress-bar {
+      height: 100%; background: linear-gradient(90deg, var(--deep), var(--mid));
+      border-radius: 100px; width: 0%; transition: width 0.3s ease;
+    }
+    .progress-label { font-size: 0.8rem; color: var(--soft); text-align: center; margin-bottom: 14px; }
+
+    /* Upload button */
+    .upload-btn {
+      width: 100%; padding: 16px;
+      background: linear-gradient(135deg, var(--deep) 0%, var(--mid) 100%);
+      color: white; border: none; border-radius: 14px;
+      font-family: 'Lato', Arial, sans-serif; font-size: 1rem; font-weight: 700;
+      letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer;
+      box-shadow: 0 4px 18px rgba(255,77,109,0.35); transition: transform 0.2s, opacity 0.2s;
+    }
+    .upload-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .upload-btn:not(:disabled):active { transform: scale(0.97); }
+
+    /* Error banner */
+    .error-banner {
+      background: #fff0f0; border: 1.5px solid #ffb3b3;
+      border-radius: 10px; padding: 10px 14px;
+      font-size: 0.85rem; color: #c0392b; margin-bottom: 14px; display: none;
+    }
+    .error-banner.visible { display: block; }
+
+    /* Success */
+    .success-screen { text-align: center; padding: 16px 0; }
+    .success-icon { font-size: 3.2rem; display: block; margin-bottom: 14px; }
+    .success-title { font-family: 'Playfair Display', Georgia, serif; font-size: 1.5rem; color: var(--deep); margin-bottom: 8px; }
+    .success-sub { font-size: 0.9rem; color: var(--soft); margin-bottom: 24px; line-height: 1.5; }
+    .upload-more-btn {
+      background: none; border: 2px solid var(--deep); color: var(--deep);
+      border-radius: 100px; padding: 10px 28px;
+      font-family: 'Lato', Arial, sans-serif; font-size: 0.9rem; font-weight: 700; cursor: pointer;
+    }
+    .upload-more-btn:active { background: var(--deep); color: white; }
+  </style>
+</head>
+<body>
+
+  <div class="page-header">
+    <span class="heart" aria-hidden="true">&#9829;</span>
+    <h1>Add Memories</h1>
+    <p class="subtitle">Misio i Misia</p>
+  </div>
+
+  <div class="tabs" role="tablist" aria-label="Upload method">
+    <button class="tab-btn active" role="tab" aria-selected="true" aria-controls="panel-photos" id="tab-photos">
+      <span class="tab-icon" aria-hidden="true">&#128247;</span>Photos &amp; Videos
+    </button>
+    <button class="tab-btn" role="tab" aria-selected="false" aria-controls="panel-album" id="tab-album">
+      <span class="tab-icon" aria-hidden="true">&#128444;</span>Full Album
+    </button>
+    <button class="tab-btn" role="tab" aria-selected="false" aria-controls="panel-zip" id="tab-zip">
+      <span class="tab-icon" aria-hidden="true">&#128230;</span>ZIP File
+    </button>
+  </div>
+
+  <div class="card" id="main-card">
+
+    <!-- Tab 1: Photos & Videos -->
+    <div class="tab-panel active" id="panel-photos" role="tabpanel" aria-labelledby="tab-photos">
+      <div class="pick-zone" id="pick-zone-photos">
+        <span class="pick-icon" aria-hidden="true">&#128247;</span>
+        <p class="pick-text">Tap to choose photos &amp; videos</p>
+        <p class="pick-sub">Opens your camera roll</p>
+        <p class="pick-hint">JPG &middot; PNG &middot; HEIC &middot; MP4 &middot; MOV</p>
+        <input type="file" id="file-input-photos" multiple accept="image/*,video/*" />
+      </div>
+      <div class="preview-grid" id="preview-photos"></div>
+      <div class="error-banner" id="error-photos"></div>
+      <div id="progress-photos" style="display:none">
+        <div class="progress-wrap"><div class="progress-bar" id="bar-photos"></div></div>
+        <p class="progress-label" id="lbl-photos">Uploading&hellip;</p>
+      </div>
+      <button class="upload-btn" id="btn-photos" disabled>Upload &#9829;</button>
+    </div>
+
+    <!-- Tab 2: Full Album -->
+    <div class="tab-panel" id="panel-album" role="tabpanel" aria-labelledby="tab-album">
+      <div class="album-info">
+        <strong>How to upload a whole album from iPhone:</strong>
+        <ul class="album-steps">
+          <li>Tap the pick zone below</li>
+          <li>In the Photos picker, tap <strong>Select More</strong> or long-press to select all</li>
+          <li>Or open an album and tap <strong>Select &rarr; Select All</strong></li>
+          <li>Tap <strong>Add</strong> &mdash; all selected files will upload at once</li>
+        </ul>
+      </div>
+      <div class="pick-zone" id="pick-zone-album">
+        <span class="pick-icon" aria-hidden="true">&#128444;</span>
+        <p class="pick-text">Tap to open your Albums</p>
+        <p class="pick-sub">Select an entire album at once</p>
+        <p class="pick-hint">All photos &amp; videos in the album will be added</p>
+        <input type="file" id="file-input-album" multiple accept="image/*,video/*" />
+      </div>
+      <div class="preview-grid" id="preview-album"></div>
+      <div class="error-banner" id="error-album"></div>
+      <div id="progress-album" style="display:none">
+        <div class="progress-wrap"><div class="progress-bar" id="bar-album"></div></div>
+        <p class="progress-label" id="lbl-album">Uploading&hellip;</p>
+      </div>
+      <button class="upload-btn" id="btn-album" disabled>Upload Album &#9829;</button>
+    </div>
+
+    <!-- Tab 3: ZIP -->
+    <div class="tab-panel" id="panel-zip" role="tabpanel" aria-labelledby="tab-zip">
+      <div class="zip-info">
+        <strong>Upload a ZIP archive</strong> &mdash; the server will extract it and add every
+        photo &amp; video inside. On iPhone: use the <strong>Files app</strong> to locate your ZIP.
+      </div>
+      <div class="pick-zone" id="pick-zone-zip">
+        <span class="pick-icon" aria-hidden="true">&#128230;</span>
+        <p class="pick-text">Tap to choose a ZIP file</p>
+        <p class="pick-sub">Opens Files app</p>
+        <p class="pick-hint">ZIP archives are extracted automatically</p>
+        <input type="file" id="file-input-zip" accept=".zip,application/zip,application/x-zip-compressed" />
+      </div>
+      <div class="preview-grid" id="preview-zip"></div>
+      <div class="error-banner" id="error-zip"></div>
+      <div id="progress-zip" style="display:none">
+        <div class="progress-wrap"><div class="progress-bar" id="bar-zip"></div></div>
+        <p class="progress-label" id="lbl-zip">Uploading &amp; extracting&hellip;</p>
+      </div>
+      <button class="upload-btn" id="btn-zip" disabled>Upload ZIP &#9829;</button>
+    </div>
+
+  </div>
+
+  <script>
+    const TOKEN      = "{{ token }}";
+    const UPLOAD_URL = `/mobile/${TOKEN}/upload`;
+
+    // Files sent per request — keeps each request small and retryable
+    const CHUNK_SIZE = 20;
+    // Above this many staged files, show a count badge instead of individual thumbs
+    const SUMMARY_THRESHOLD = 8;
+
+    /* ---- Tab switching ---- */
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach(b => {
+          b.classList.remove('active'); b.setAttribute('aria-selected', 'false');
+        });
+        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active'); btn.setAttribute('aria-selected', 'true');
+        document.getElementById(btn.getAttribute('aria-controls')).classList.add('active');
+      });
+    });
+
+    /*
+     * Lazy photo thumbnail observer.
+     * IMPORTANT: we only ever call createObjectURL for PHOTOS, never videos.
+     * Video object URLs cause the browser to probe media metadata for every
+     * file, which is the primary cause of lag when selecting 100+ videos.
+     */
+    const thumbObserver = ('IntersectionObserver' in window)
+      ? new IntersectionObserver((entries, obs) => {
+          entries.forEach(entry => {
+            if (!entry.isIntersecting) return;
+            const el = entry.target;
+            const file = el._pendingFile;
+            if (!file) return;
+            obs.unobserve(el); delete el._pendingFile;
+            const url = URL.createObjectURL(file);
+            const img = document.createElement('img');
+            img.alt = file.name;
+            img.onload = () => URL.revokeObjectURL(url);
+            img.src = url;
+            el.querySelector('.thumb-placeholder')?.replaceWith(img);
+          });
+        }, { rootMargin: '150px' })
+      : null;
+
+    /* ---- Chunked upload: sends files in batches of CHUNK_SIZE ---- */
+    async function uploadInChunks(files, onProgress) {
+      let uploaded = [], errors = [], lastMedia = { photos: [], videos: [] };
+      const total = files.length;
+      for (let start = 0; start < total; start += CHUNK_SIZE) {
+        const chunk = files.slice(start, start + CHUNK_SIZE);
+        const fd = new FormData();
+        chunk.forEach(f => fd.append('files', f));
+        const result = await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', UPLOAD_URL);
+          xhr.upload.addEventListener('progress', e => {
+            if (e.lengthComputable)
+              onProgress(start + chunk.length * (e.loaded / e.total), total);
+          });
+          xhr.addEventListener('load', () => {
+            if (xhr.status >= 200 && xhr.status < 300)
+              resolve(JSON.parse(xhr.responseText));
+            else {
+              try { reject(JSON.parse(xhr.responseText)); }
+              catch { reject({ error: 'HTTP ' + xhr.status }); }
+            }
+          });
+          xhr.addEventListener('error', () => reject({ error: 'Network error - check Wi-Fi.' }));
+          xhr.send(fd);
+        });
+        uploaded  = uploaded.concat(result.uploaded || []);
+        errors    = errors.concat(result.errors   || []);
+        lastMedia = { photos: result.photos, videos: result.videos };
+        onProgress(start + chunk.length, total);
+      }
+      return { uploaded, errors, ...lastMedia };
+    }
+
+    /* ---- Upload panel factory ---- */
+    function makePanel(cfg) {
+      const fileInput   = document.getElementById(cfg.fileInputId);
+      const previewGrid = document.getElementById(cfg.previewId);
+      const errorBanner = document.getElementById(cfg.errorId);
+      const progressSec = document.getElementById(cfg.progressId);
+      const progressBar = document.getElementById(cfg.barId);
+      const progressLbl = document.getElementById(cfg.lblId);
+      const uploadBtn   = document.getElementById(cfg.btnId);
+      const pickZone    = fileInput.closest('.pick-zone');
+
+      // Map<"name|size", File> — O(1) dedup, no Array.find O(n^2)
+      let stagedMap = new Map();
+
+      fileInput.addEventListener('change', () => {
+        const files = Array.from(fileInput.files);
+        fileInput.value = '';
+        if (!files.length) return;
+
+        // 1. Show instant feedback so the UI doesn't appear frozen
+        uploadBtn.disabled = true;
+        previewGrid.innerHTML =
+          '<div class="count-badge" style="grid-column:1/-1">' +
+          '<span class="count-num">&#9203;</span>' +
+          '<span class="count-label">Processing ' + files.length + ' file' + (files.length !== 1 ? 's' : '') + '...</span>' +
+          '</div>';
+
+        // 2. Yield to browser so it can paint the above, then do real work
+        setTimeout(function() { addFiles(files); }, 0);
+      });
+
+      function addFiles(files) {
+        files.forEach(function(f) {
+          var key = f.name + '|' + f.size;
+          if (!stagedMap.has(key)) stagedMap.set(key, f);
+        });
+        render();
+      }
+
+      function removeFile(key) {
+        var el = previewGrid.querySelector('[data-key="' + CSS.escape(key) + '"]');
+        if (el && el._pendingFile && thumbObserver) thumbObserver.unobserve(el);
+        stagedMap.delete(key);
+        render();
+      }
+
+      function render() {
+        var files = Array.from(stagedMap.values());
+        var frag  = document.createDocumentFragment();
+
+        if (files.length > SUMMARY_THRESHOLD) {
+          // Summary badge — no object URLs, no per-file DOM nodes
+          var zips   = files.filter(function(f) { return f.name.toLowerCase().endsWith('.zip'); }).length;
+          var vids   = files.filter(function(f) { return f.type.startsWith('video/'); }).length;
+          var photos = files.length - zips - vids;
+          var parts  = [];
+          if (photos) parts.push('\uD83D\uDCF7 ' + photos);
+          if (vids)   parts.push('\uD83C\uDFAC ' + vids);
+          if (zips)   parts.push('\uD83D\uDCE6 ' + zips);
+          var badge = document.createElement('div');
+          badge.className = 'count-badge';
+          badge.style.gridColumn = '1 / -1';
+          badge.innerHTML =
+            '<span class="count-num">' + files.length + '</span>' +
+            '<span class="count-label">files ready &middot; ' + parts.join('  ') + '</span>' +
+            '<button class="count-clear" aria-label="Clear all">&times; Clear</button>';
+          frag.appendChild(badge);
+
+        } else {
+          files.forEach(function(f) {
+            var isVid = f.type.startsWith('video/');
+            var isZip = f.name.toLowerCase().endsWith('.zip');
+            var key   = f.name + '|' + f.size;
+            var div   = document.createElement('div');
+            div.className = 'preview-thumb';
+            div.dataset.key = key;
+
+            if (isZip) {
+              div.innerHTML = '<div class="zip-badge">\uD83D\uDCE6<span>' + f.name + '</span></div>';
+
+            } else if (isVid) {
+              // Static icon only — never createObjectURL for video
+              div.innerHTML = '<div class="thumb-placeholder">\uD83C\uDFAC</div>';
+              var badge = document.createElement('span');
+              badge.className = 'vid-badge'; badge.textContent = 'VIDEO';
+              div.appendChild(badge);
+
+            } else {
+              // Photo: lazy object URL via IntersectionObserver
+              div.innerHTML = '<div class="thumb-placeholder">\uD83D\uDCF7</div>';
+              if (thumbObserver) {
+                div._pendingFile = f;
+                thumbObserver.observe(div);
+              } else {
+                var url = URL.createObjectURL(f);
+                var img = document.createElement('img');
+                img.alt = f.name;
+                img.onload = function() { URL.revokeObjectURL(url); };
+                img.src = url;
+                div.querySelector('.thumb-placeholder').replaceWith(img);
+              }
+            }
+
+            var rm = document.createElement('button');
+            rm.className = 'remove-thumb';
+            rm.setAttribute('aria-label', 'Remove ' + f.name);
+            rm.dataset.key = key;
+            rm.textContent = '\u00D7';
+            div.appendChild(rm);
+            frag.appendChild(div);
+          });
+        }
+
+        // Unobserve any pending thumbs before clearing
+        previewGrid.querySelectorAll('[data-key]').forEach(function(el) {
+          if (el._pendingFile && thumbObserver) thumbObserver.unobserve(el);
+        });
+        previewGrid.innerHTML = '';
+        previewGrid.appendChild(frag);
+
+        // Single delegated click handler
+        previewGrid.onclick = function(e) {
+          var rm  = e.target.closest('.remove-thumb');
+          var clr = e.target.closest('.count-clear');
+          if (rm)  removeFile(rm.dataset.key);
+          if (clr) { stagedMap.clear(); render(); }
+        };
+
+        pickZone.classList.toggle('has-files', files.length > 0);
+        uploadBtn.disabled = files.length === 0;
+      }
+
+      uploadBtn.addEventListener('click', async function() {
+        var files = Array.from(stagedMap.values());
+        if (!files.length) return;
+        uploadBtn.disabled = true;
+        errorBanner.classList.remove('visible');
+        progressSec.style.display = 'block';
+        progressBar.style.width = '0%';
+        var isZipOnly = files.length === 1 && files[0].name.toLowerCase().endsWith('.zip');
+        progressLbl.textContent = isZipOnly ? 'Uploading & extracting...' : 'Uploading 0 / ' + files.length;
+        try {
+          var result = await uploadInChunks(files, function(done, total) {
+            var pct = Math.round((done / total) * 100);
+            progressBar.style.width = pct + '%';
+            if (!isZipOnly)
+              progressLbl.textContent = 'Uploading ' + Math.min(Math.ceil(done), total) + ' / ' + total;
+            else if (pct >= 100)
+              progressLbl.textContent = 'Extracting ZIP...';
+          });
+          progressSec.style.display = 'none';
+          showSuccess(result.uploaded.length, result.errors);
+        } catch(err) {
+          progressSec.style.display = 'none';
+          errorBanner.textContent = (err && err.error) ? err.error : 'Upload failed. Please try again.';
+          errorBanner.classList.add('visible');
+          uploadBtn.disabled = false;
+        }
+      });
+    }
+
+    makePanel({ fileInputId:'file-input-photos', previewId:'preview-photos', errorId:'error-photos', progressId:'progress-photos', barId:'bar-photos', lblId:'lbl-photos', btnId:'btn-photos' });
+    makePanel({ fileInputId:'file-input-album',  previewId:'preview-album',  errorId:'error-album',  progressId:'progress-album',  barId:'bar-album',  lblId:'lbl-album',  btnId:'btn-album'  });
+    makePanel({ fileInputId:'file-input-zip',    previewId:'preview-zip',    errorId:'error-zip',    progressId:'progress-zip',    barId:'bar-zip',    lblId:'lbl-zip',    btnId:'btn-zip'    });
+
+    function showSuccess(count, errors) {
+      var card = document.getElementById('main-card');
+      var errNote = (errors && errors.length)
+        ? '<p style="font-size:0.8rem;color:#c0392b;margin-top:8px;">' + errors.length + ' file(s) skipped</p>'
+        : '';
+      card.innerHTML =
+        '<div class="success-screen">' +
+        '<span class="success-icon" aria-hidden="true">&#9829;</span>' +
+        '<p class="success-title">' + count + ' memor' + (count !== 1 ? 'ies' : 'y') + ' added!</p>' +
+        '<p class="success-sub">They are now live in the gallery on the big screen.' + errNote + '</p>' +
+        '<button class="upload-more-btn" onclick="location.reload()">Upload more &#43;</button>' +
+        '</div>';
+    }
+  </script>
+
+</body>
+</html>
