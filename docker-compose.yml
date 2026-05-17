@@ -1,0 +1,19 @@
+version: "3.9"
+
+services:
+  app:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      SITE_PASSWORD: "${SITE_PASSWORD}"
+      SECRET_KEY: "${SECRET_KEY:-change-me}"
+      R2_BUCKET_NAME: "${R2_BUCKET_NAME}"
+      R2_ACCOUNT_ID: "${R2_ACCOUNT_ID}"
+      R2_ACCESS_KEY_ID: "${R2_ACCESS_KEY_ID}"
+      R2_SECRET_ACCESS_KEY: "${R2_SECRET_ACCESS_KEY}"
+      R2_PUBLIC_URL: "${R2_PUBLIC_URL}"
+      MEDIA_URL_EXPIRY: "${MEDIA_URL_EXPIRY:-3600}"
+    volumes:
+      - ./static/media:/app/static/media
+    restart: unless-stopped

@@ -1179,6 +1179,63 @@ def gallery():
     )
 
 
+@app.route("/admin")
+@login_required
+def admin():
+    files = []
+
+    if using_r2():
+        s3 = _get_r2()
+        paginator = s3.get_paginator("list_objects_v2")
+        objects = []
+
+        for page in paginator.paginate(Bucket=R2_BUCKET):
+            objects.extend(page.get("Contents", []))
+
+        objects.sort(key=lambda obj: obj["LastModified"], reverse=True)
+
+        for obj in objects:
+            name = obj.get("Key")
+            if not name or not allowed_file(name):
+                continue
+
+            files.append({
+                "name": name,
+                "url": storage_url(name),
+                "type": "video" if is_video(name) else "photo",
+                "size": obj.get("Size", 0),
+                "modified": obj.get("LastModified"),
+            })
+    else:
+        all_files = [
+            f for f in LOCAL_UPLOAD_FOLDER.rglob("*")
+            if f.is_file()
+        ]
+
+        all_files.sort(
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+
+        for f in all_files:
+            rel = f.relative_to(LOCAL_UPLOAD_FOLDER).as_posix()
+            if not allowed_file(rel):
+                continue
+
+            files.append({
+                "name": rel,
+                "url": storage_url(rel),
+                "type": "video" if is_video(rel) else "photo",
+                "size": f.stat().st_size,
+                "modified": datetime.fromtimestamp(f.stat().st_mtime),
+            })
+
+    return render_template(
+        "admin.html",
+        files=files,
+    )
+
+
 @app.route("/upload", methods=["POST"])
 @login_required
 def upload():
