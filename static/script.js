@@ -588,7 +588,10 @@ function attachItemListeners(item) {
 
 function deleteItem(filename, type) {
   if (!confirm('Remove this ' + type + ' from your memories?')) return;
-  fetch(deleteUrl(filename), { method: 'DELETE' })
+  fetch(deleteUrl(filename), {
+    method: 'DELETE',
+    credentials: 'same-origin',
+  })
     .then(function (res) {
       if (!res.ok) throw new Error();
       return res.json();

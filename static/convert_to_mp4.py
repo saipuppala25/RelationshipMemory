@@ -44,6 +44,7 @@ def convert_mov_to_mp4(input_path: Path) -> bool:
         "-y",
 
         "-i", str(input_path),
+        "-map", "0",
 
         # Copy video stream directly
         "-c:v", "copy",
@@ -51,6 +52,7 @@ def convert_mov_to_mp4(input_path: Path) -> bool:
         # Convert audio for compatibility
         "-c:a", "aac",
         "-b:a", "128k",
+        "-ac", "2",
 
         # Optimize playback
         "-movflags", "+faststart",
@@ -88,6 +90,7 @@ def convert_mov_to_mp4(input_path: Path) -> bool:
         "-y",
 
         "-i", str(input_path),
+        "-map", "0",
 
         # Fast encoding
         "-c:v", "libx264",
@@ -101,7 +104,8 @@ def convert_mov_to_mp4(input_path: Path) -> bool:
 
         # Audio
         "-c:a", "aac",
-        "-b:a", "96k",
+        "-b:a", "128k",
+        "-ac", "2",
 
         # Streaming optimization
         "-movflags", "+faststart",
