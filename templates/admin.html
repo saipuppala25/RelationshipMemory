@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Logs — Memories of Us</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+</head>
+<body>
+  <nav class="navbar" role="navigation" aria-label="Main navigation">
+    <a href="{{ url_for('gallery') }}" class="navbar-brand">Memories of Us</a>
+    <div class="navbar-actions">
+      <a href="{{ url_for('gallery') }}" class="nav-link">Gallery</a>
+      <a href="{{ url_for('logout') }}" class="logout-link" aria-label="Log out">&#128274; Logout</a>
+    </div>
+  </nav>
+
+  <main class="admin-page">
+    <header class="admin-header">
+      <h1>Admin Logs</h1>
+      <p>Recent media objects and metadata from your storage backend.</p>
+    </header>
+
+    {% if files %}
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Type</th>
+            <th>Modified</th>
+            <th>Size</th>
+            <th>Preview</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for file in files %}
+            <tr>
+              <td>{{ file.name }}</td>
+              <td>{{ file.type }}</td>
+              <td>{{ file.modified.strftime('%Y-%m-%d %H:%M:%S') if file.modified else '—' }}</td>
+              <td>{{ '{:,}'.format(file.size) }} bytes</td>
+              <td><a href="{{ file.url }}" target="_blank" rel="noopener">View</a></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="empty-state">
+        <p>No media objects found yet.</p>
+      </div>
+    {% endif %}
+  </main>
+</body>
+</html>

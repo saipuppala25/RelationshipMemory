@@ -28,6 +28,13 @@ from pathlib import Path
 from io import BytesIO
 from datetime import datetime
 import base64
+import hashlib
+import json
+import threading
+from queue import Queue, Empty
+import subprocess
+import sys
+from pathlib import Path as _Path_for_bg
 
 from dotenv import load_dotenv
 import certifi
@@ -297,57 +304,281 @@ def _unique_name(original_filename: str) -> str:
     )
 
 
+# Hash store for local uploads
+HASHES_FILE = LOCAL_UPLOAD_FOLDER / ".hashes.json"
+
+# In-memory cache of known sha256 -> key
+HASH_CACHE: dict[str, str] = {}
+
+# Background job queue
+JOB_QUEUE: Queue = Queue()
+
+
+def _init_hash_cache(start_background_sync: bool = True) -> None:
+    """Load local hashes into memory and optionally start background sync from R2."""
+    global HASH_CACHE
+
+    HASH_CACHE = _load_local_hashes()
+
+    if start_background_sync and using_r2():
+        t = threading.Thread(target=_sync_hashes_from_r2, daemon=True)
+        t.start()
+
+
+# Background worker functions
+def _background_worker():
+    """Worker loop processing jobs from JOB_QUEUE."""
+    script_dir = _Path_for_bg(__file__).parent / "static"
+    convert_script = script_dir / "convert_to_mp4.py"
+    clean_script = script_dir / "clean_mov.py"
+
+    while True:
+        try:
+            job = JOB_QUEUE.get()
+        except Exception:
+            job = None
+
+        if not job:
+            continue
+
+        try:
+            jtype = job.get("type")
+
+            if jtype == "convert_directory":
+                directory = job.get("directory")
+                # pass directory as env or arg if needed; script uses hardcoded path by default
+                subprocess.run([
+                    sys.executable,
+                    str(convert_script)
+                ], check=False)
+
+            elif jtype == "clean_r2":
+                subprocess.run([
+                    sys.executable,
+                    str(clean_script)
+                ], check=False)
+
+        except Exception:
+            pass
+
+        finally:
+            try:
+                JOB_QUEUE.task_done()
+            except Exception:
+                pass
+
+
+def enqueue_job(job: dict) -> None:
+    JOB_QUEUE.put(job)
+
+
+def _sync_hashes_from_r2() -> None:
+    """Background: scan R2 object metadata and merge sha256 into local cache/file."""
+    try:
+        s3 = _get_r2()
+        paginator = s3.get_paginator("list_objects_v2")
+        updated = False
+
+        for page in paginator.paginate(Bucket=R2_BUCKET):
+            for obj in page.get("Contents", []):
+                key = obj.get("Key")
+                try:
+                    head = s3.head_object(Bucket=R2_BUCKET, Key=key)
+                    meta = head.get("Metadata", {}) or {}
+                    sha = meta.get("sha256")
+                    if sha:
+                        if sha not in HASH_CACHE:
+                            HASH_CACHE[sha] = key
+                            updated = True
+                except Exception:
+                    continue
+
+        if updated:
+            _save_local_hashes(HASH_CACHE)
+    except Exception:
+        return
+
+
+def _load_local_hashes() -> dict:
+    try:
+        if HASHES_FILE.exists():
+            return json.loads(HASHES_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+
+    return {}
+
+
+def _save_local_hashes(data: dict) -> None:
+    try:
+        HASHES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        HASHES_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _remove_hashes_for_filename(filename: str) -> None:
+    """Remove sha256 entries for a deleted file from cache and on-disk hash store."""
+    try:
+        hashes = _load_local_hashes()
+    except Exception:
+        hashes = {}
+
+    changed = False
+
+    # Remove from in-memory cache if it points to this filename.
+    for sha, key in list(HASH_CACHE.items()):
+        if key == filename:
+            HASH_CACHE.pop(sha, None)
+            changed = True
+
+    # Remove matching entries from persisted hash file.
+    for sha, key in list(hashes.items()):
+        if key == filename:
+            hashes.pop(sha, None)
+            changed = True
+
+    if changed:
+        _save_local_hashes(hashes)
+
+
+def compute_sha256_from_filestorage(file_storage) -> str:
+    file_storage.stream.seek(0)
+    h = hashlib.sha256()
+    while True:
+        chunk = file_storage.read(8192)
+        if not chunk:
+            break
+        h.update(chunk)
+    digest = h.hexdigest()
+    file_storage.seek(0)
+    return digest
+
+
+def compute_sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def is_duplicate_hash(sha256: str) -> bool:
+    # Fast path: in-memory cache (populated from local file and background R2 sync)
+    if sha256 in HASH_CACHE:
+        return True
+
+    # Fallback: check on-disk local hashes (in case cache wasn't initialized)
+    local = _load_local_hashes()
+    if sha256 in local:
+        HASH_CACHE.update(local)
+        return True
+
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Storage Layer
 # ---------------------------------------------------------------------------
 
 
-def storage_save(file_storage, unique_name: str) -> None:
-    """Save uploaded file."""
+def storage_save(file_storage, unique_name: str, sha256: str | None = None) -> None:
+    """Save uploaded file. Optionally attach sha256 metadata."""
 
     if using_r2():
         s3 = _get_r2()
 
         file_storage.seek(0)
 
+        extra = {
+            "ContentType": (
+                getattr(file_storage, "content_type", None) or
+                get_content_type(unique_name)
+            )
+        }
+
+        if sha256:
+            extra["Metadata"] = {"sha256": sha256}
+
         s3.upload_fileobj(
             file_storage,
             R2_BUCKET,
             unique_name,
-            ExtraArgs={
-                "ContentType": (
-                    file_storage.content_type or
-                    get_content_type(unique_name)
-                )
-            },
+            ExtraArgs=extra,
         )
+        # update cache for this sha
+        if sha256:
+            try:
+                HASH_CACHE[sha256] = unique_name
+                _save_local_hashes(HASH_CACHE)
+            except Exception:
+                pass
 
     else:
         local_path = LOCAL_UPLOAD_FOLDER / unique_name
         local_path.parent.mkdir(parents=True, exist_ok=True)
 
-        file_storage.save(str(local_path))
+        # Prefer FileStorage.save when available, otherwise write from file-like
+        if hasattr(file_storage, "save"):
+            file_storage.save(str(local_path))
+        else:
+            try:
+                file_storage.seek(0)
+            except Exception:
+                pass
+
+            with open(local_path, "wb") as out:
+                while True:
+                    chunk = file_storage.read(8192)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+
+        if sha256:
+            hashes = _load_local_hashes()
+            hashes[sha256] = str(local_path.relative_to(LOCAL_UPLOAD_FOLDER).as_posix())
+            _save_local_hashes(hashes)
+            try:
+                HASH_CACHE[sha256] = str(local_path.relative_to(LOCAL_UPLOAD_FOLDER).as_posix())
+            except Exception:
+                pass
 
 
 
-def storage_save_bytes(data: bytes, unique_name: str) -> None:
-    """Save raw bytes."""
+def storage_save_bytes(data: bytes, unique_name: str, sha256: str | None = None) -> None:
+    """Save raw bytes. Optionally attach sha256 metadata."""
 
     if using_r2():
         s3 = _get_r2()
 
-        s3.put_object(
-            Bucket=R2_BUCKET,
-            Key=unique_name,
-            Body=data,
-            ContentType=get_content_type(unique_name),
-        )
+        params = {
+            "Bucket": R2_BUCKET,
+            "Key": unique_name,
+            "Body": data,
+            "ContentType": get_content_type(unique_name),
+        }
+
+        if sha256:
+            params["Metadata"] = {"sha256": sha256}
+
+        s3.put_object(**params)
+        if sha256:
+            try:
+                HASH_CACHE[sha256] = unique_name
+                _save_local_hashes(HASH_CACHE)
+            except Exception:
+                pass
 
     else:
         local_path = LOCAL_UPLOAD_FOLDER / unique_name
         local_path.parent.mkdir(parents=True, exist_ok=True)
 
         local_path.write_bytes(data)
+
+        if sha256:
+            hashes = _load_local_hashes()
+            hashes[sha256] = str(local_path.relative_to(LOCAL_UPLOAD_FOLDER).as_posix())
+            _save_local_hashes(hashes)
+            try:
+                HASH_CACHE[sha256] = str(local_path.relative_to(LOCAL_UPLOAD_FOLDER).as_posix())
+            except Exception:
+                pass
 
 
 def _ffmpeg_available() -> bool:
@@ -365,6 +596,8 @@ def _transcode_mov_to_mp4(source_path: Path, target_path: Path) -> bool:
                 "-y",
                 "-i",
                 str(source_path),
+                "-map",
+                "0",
                 "-c:v",
                 "libx264",
                 "-preset",
@@ -376,7 +609,9 @@ def _transcode_mov_to_mp4(source_path: Path, target_path: Path) -> bool:
                 "-c:a",
                 "aac",
                 "-b:a",
-                "128k",
+                "192k",
+                "-ac",
+                "2",
                 "-movflags",
                 "+faststart",
                 str(target_path),
@@ -460,16 +695,31 @@ def storage_delete(filename: str) -> bool:
                 Bucket=R2_BUCKET,
                 Key=filename,
             )
-            return True
         except Exception:
             return False
+
+        try:
+            _remove_hashes_for_filename(filename)
+        except Exception:
+            pass
+
+        return True
 
     local_path = LOCAL_UPLOAD_FOLDER / filename
 
     if not local_path.exists():
         return False
 
-    local_path.unlink()
+    try:
+        local_path.unlink()
+    except Exception:
+        return False
+
+    try:
+        _remove_hashes_for_filename(filename)
+    except Exception:
+        pass
+
     return True
 
 
@@ -616,6 +866,12 @@ def save_uploaded_file(file_storage) -> str | None:
     if not allowed_file(file_storage.filename):
         return None
 
+    # Compute incoming file hash and check duplicates
+    sha = compute_sha256_from_filestorage(file_storage)
+
+    if is_duplicate_hash(sha):
+        return "DUPLICATE"
+
     name = _unique_name(file_storage.filename)
     ext = file_storage.filename.rsplit('.', 1)[-1].lower() if '.' in file_storage.filename else ''
 
@@ -624,29 +880,38 @@ def save_uploaded_file(file_storage) -> str | None:
             source_path = Path(tmpdir) / file_storage.filename
             file_storage.save(str(source_path))
 
-            mp4_name = f"{Path(name).stem}.mp4"
-            target_path = Path(tmpdir) / mp4_name
+            mp4_name = os.path.splitext(name)[0] + '.mp4'
+            target_path = Path(tmpdir) / Path(mp4_name).name
 
             if _transcode_mov_to_mp4(source_path, target_path):
+                # compute hash of transcoded bytes
+                try:
+                    mp4_bytes = target_path.read_bytes()
+                    mp4_sha = compute_sha256_bytes(mp4_bytes)
+                except Exception:
+                    mp4_sha = None
+
                 if using_r2():
-                    s3 = _get_r2()
-                    with target_path.open('rb') as fh:
-                        s3.upload_fileobj(
-                            fh,
-                            R2_BUCKET,
-                            mp4_name,
-                            ExtraArgs={
-                                'ContentType': get_content_type(mp4_name),
-                            },
-                        )
+                    if mp4_sha:
+                        with target_path.open('rb') as fh:
+                            storage_save(fh, mp4_name, sha256=mp4_sha)
+                    else:
+                        with target_path.open('rb') as fh:
+                            storage_save(fh, mp4_name, sha256=None)
                 else:
                     local_path = LOCAL_UPLOAD_FOLDER / mp4_name
                     local_path.parent.mkdir(parents=True, exist_ok=True)
                     target_path.replace(local_path)
 
+                    if mp4_sha:
+                        hashes = _load_local_hashes()
+                        hashes[mp4_sha] = str(local_path.relative_to(LOCAL_UPLOAD_FOLDER).as_posix())
+                        _save_local_hashes(hashes)
+
                 return mp4_name
 
-    storage_save(file_storage, name)
+    # Default save (photos and non-transcoded videos)
+    storage_save(file_storage, name, sha256=sha)
     return name
 
 
@@ -711,46 +976,57 @@ def extract_zip(file_storage) -> tuple[list[str], list[str]]:
                             with zf.open(info.filename) as extracted, source_path.open('wb') as out:
                                 out.write(extracted.read())
 
-                            mp4_name = f"{Path(unique_name).stem}.mp4"
-                            target_path = Path(tmpdir) / mp4_name
+                            mp4_name = os.path.splitext(unique_name)[0] + '.mp4'
+                            target_path = Path(tmpdir) / Path(mp4_name).name
 
                             if _transcode_mov_to_mp4(source_path, target_path):
+                                try:
+                                    mp4_bytes = target_path.read_bytes()
+                                    mp4_sha = compute_sha256_bytes(mp4_bytes)
+                                except Exception:
+                                    mp4_bytes = None
+                                    mp4_sha = None
+
+                                if mp4_sha and is_duplicate_hash(mp4_sha):
+                                    errors.append(f"{basename}: duplicate upload")
+                                    continue
+
                                 if using_r2():
-                                    s3 = _get_r2()
-                                    with target_path.open('rb') as fh:
-                                        s3.upload_fileobj(
-                                            fh,
-                                            R2_BUCKET,
-                                            mp4_name,
-                                            ExtraArgs={
-                                                'ContentType': get_content_type(mp4_name),
-                                            },
-                                        )
+                                    if mp4_bytes is not None:
+                                        storage_save_bytes(mp4_bytes, mp4_name, sha256=mp4_sha)
+                                    else:
+                                        with target_path.open('rb') as fh:
+                                            storage_save(fh, mp4_name, sha256=None)
                                 else:
                                     local_path = LOCAL_UPLOAD_FOLDER / mp4_name
                                     local_path.parent.mkdir(parents=True, exist_ok=True)
                                     target_path.replace(local_path)
 
+                                    if mp4_sha:
+                                        hashes = _load_local_hashes()
+                                        hashes[mp4_sha] = str(local_path.relative_to(LOCAL_UPLOAD_FOLDER).as_posix())
+                                        _save_local_hashes(hashes)
+
                                 uploaded.append(mp4_name)
                                 continue
 
-                    if using_r2():
-                        s3 = _get_r2()
-
-                        with zf.open(info.filename) as extracted:
-                            s3.upload_fileobj(
-                                extracted,
-                                R2_BUCKET,
-                                unique_name,
-                                ExtraArgs={
-                                    "ContentType": (
-                                        get_content_type(unique_name)
-                                    )
-                                },
-                            )
-                    else:
+                    # Read entry bytes to compute hash and then save
+                    try:
                         data = zf.read(info.filename)
-                        storage_save_bytes(data, unique_name)
+                    except Exception:
+                        errors.append(f"{basename}: failed to read entry")
+                        continue
+
+                    sha = compute_sha256_bytes(data)
+
+                    if is_duplicate_hash(sha):
+                        errors.append(f"{basename}: duplicate upload")
+                        continue
+
+                    if using_r2():
+                        storage_save_bytes(data, unique_name, sha256=sha)
+                    else:
+                        storage_save_bytes(data, unique_name, sha256=sha)
 
                     uploaded.append(unique_name)
 
@@ -787,7 +1063,9 @@ def _handle_upload_request() -> tuple[list[str], list[str]]:
         else:
             saved = save_uploaded_file(file)
 
-            if saved:
+            if saved == "DUPLICATE":
+                errors.append(f"{file.filename}: duplicate upload")
+            elif saved:
                 uploaded.append(saved)
             else:
                 errors.append(
@@ -898,6 +1176,63 @@ def gallery():
         photo_urls=photo_urls,
         video_urls=video_urls,
         video_mime_types=video_mime_types,
+    )
+
+
+@app.route("/admin")
+@login_required
+def admin():
+    files = []
+
+    if using_r2():
+        s3 = _get_r2()
+        paginator = s3.get_paginator("list_objects_v2")
+        objects = []
+
+        for page in paginator.paginate(Bucket=R2_BUCKET):
+            objects.extend(page.get("Contents", []))
+
+        objects.sort(key=lambda obj: obj["LastModified"], reverse=True)
+
+        for obj in objects:
+            name = obj.get("Key")
+            if not name or not allowed_file(name):
+                continue
+
+            files.append({
+                "name": name,
+                "url": storage_url(name),
+                "type": "video" if is_video(name) else "photo",
+                "size": obj.get("Size", 0),
+                "modified": obj.get("LastModified"),
+            })
+    else:
+        all_files = [
+            f for f in LOCAL_UPLOAD_FOLDER.rglob("*")
+            if f.is_file()
+        ]
+
+        all_files.sort(
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+
+        for f in all_files:
+            rel = f.relative_to(LOCAL_UPLOAD_FOLDER).as_posix()
+            if not allowed_file(rel):
+                continue
+
+            files.append({
+                "name": rel,
+                "url": storage_url(rel),
+                "type": "video" if is_video(rel) else "photo",
+                "size": f.stat().st_size,
+                "modified": datetime.fromtimestamp(f.stat().st_mtime),
+            })
+
+    return render_template(
+        "admin.html",
+        files=files,
     )
 
 
@@ -1305,6 +1640,23 @@ def mobile_upload(token: str):
     })
 
 
+# Background job endpoints
+@app.route("/background/convert", methods=["POST"])
+@login_required
+def background_convert():
+    data = request.get_json(silent=True) or {}
+    directory = data.get("directory")
+    enqueue_job({"type": "convert_directory", "directory": directory})
+    return jsonify({"queued": True}), 202
+
+
+@app.route("/background/clean", methods=["POST"])
+@login_required
+def background_clean():
+    enqueue_job({"type": "clean_r2"})
+    return jsonify({"queued": True}), 202
+
+
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
@@ -1326,9 +1678,23 @@ if __name__ == "__main__":
             if not R2_SECRET_ACCESS_KEY:
                 print("Missing env var: R2_SECRET_ACCESS_KEY or R2_SECRET_KEY")
 
+    # Initialize in-memory hash cache and start background R2 sync (if configured)
+    try:
+        _init_hash_cache()
+    except Exception:
+        pass
+
+    # Start background worker thread
+    try:
+        t = threading.Thread(target=_background_worker, daemon=True)
+        t.start()
+    except Exception:
+        pass
+
     app.run(
         debug=True,
         host="0.0.0.0",
         port=5000,
     )
+
 
